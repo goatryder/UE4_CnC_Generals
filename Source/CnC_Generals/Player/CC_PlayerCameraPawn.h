@@ -50,6 +50,10 @@ class CNC_GENERALS_API ACC_PlayerCameraPawn : public APawn
 	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
 	float CameraRotationRelease_RestoreDelay;
 
+	// deg in seconds
+	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
+	float CameraRotationRestoreSpeed;
+
 	// zoom ---------------------------------------------------- /
 
 	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
@@ -105,11 +109,12 @@ private:
 	FVector Velocity;
 	float BreakingSpeed;
 	FVector2D CameraMoveCursorAnchor;
-	void CalcMoveVelocity(float DeltaTime);
+	FORCEINLINE void CalcMoveVelocity_Tick(float DeltaTime);
 
 	// rotation ------------------------------------------------ /
 	
+	bool bRotationRestoreInProgress;
 	float CamRotButtonPressedTime;
-	void RestoreCameraRotation();
+	FORCEINLINE void RestoreCameraRotation_Tick(float DeltaTime);
 
 };

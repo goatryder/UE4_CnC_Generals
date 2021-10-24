@@ -23,7 +23,7 @@ ACC_PlayerCameraPawn::ACC_PlayerCameraPawn()
 	CameraComp->SetupAttachment(SpringArmComp);
 
 	// defaults
-	CameraMoveSpeedMax = 10000.f;
+	CameraMoveSpeedMax = 16000.f;
 	CameraMoveStopTime = 0.5f;
 
 	CameraRotationSpeed = 9.f;
@@ -31,12 +31,17 @@ ACC_PlayerCameraPawn::ACC_PlayerCameraPawn()
 	CameraPitchMax = 340.f;
 	CameraPitchInitial = 300.f;
 	CameraRotationRelease_RestoreDelay = 0.15f;
+	CameraRotationRestoreSpeed = 13.f;
 
 	CameraZoomSpeed = 100.f;
 	OnZoomSpringArmLenMin = 500.f;
 	OnZoomSpringArmLenMax = 4000.f;
 
-	RestoreCameraRotation();
+	// set default rotation
+	if (SpringArmComp)
+	{
+		SpringArmComp->SetWorldRotation(FRotator(CameraPitchInitial, 0.f, 0.f));
+	}
 }
 
 // Called to bind functionality to input
@@ -72,7 +77,9 @@ void ACC_PlayerCameraPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	CalcMoveVelocity(DeltaTime);
+	CalcMoveVelocity_Tick(DeltaTime);
+
+	RestoreCameraRotation_Tick(DeltaTime);
 }
 
 void ACC_PlayerCameraPawn::CameraUpInput(float Val)
@@ -136,7 +143,7 @@ void ACC_PlayerCameraPawn::OnRotateCamera_Released()
 		const float ButtonHoldTime = World->GetTimeSeconds() - CamRotButtonPressedTime;
 		if (ButtonHoldTime < CameraRotationRelease_RestoreDelay)
 		{
-			RestoreCameraRotation();
+			bRotationRestoreInProgress = true;
 		}
 	}
 }
@@ -180,7 +187,7 @@ void ACC_PlayerCameraPawn::OnCameraZoomOut()
 	}
 }
 
-void ACC_PlayerCameraPawn::CalcMoveVelocity(float DeltaTime)
+FORCEINLINE void ACC_PlayerCameraPawn::CalcMoveVelocity_Tick(float DeltaTime)
 {
 	if (bCameraShouldMove)  // calc movement
 	{
@@ -235,14 +242,23 @@ void ACC_PlayerCameraPawn::CalcMoveVelocity(float DeltaTime)
 	{
 		Velocity = FMath::VInterpConstantTo(Velocity, FVector::ZeroVector, DeltaTime, BreakingSpeed);
 	}
-
+	
 	AddActorWorldOffset(Velocity * DeltaTime);
 }
 
-void ACC_PlayerCameraPawn::RestoreCameraRotation()
+FORCEINLINE void ACC_PlayerCameraPawn::RestoreCameraRotation_Tick(float DeltaTime)
 {
-	if (SpringArmComp)
+	if (bRotationRestoreInProgress && SpringArmComp)
 	{
-		SpringArmComp->SetWorldRotation(FRotator(CameraPitchInitial, 0.f, 0.f));
+		FRotator OldCameraRot = SpringArmComp->GetComponentRotation();
+		FRotator NewCameraRot = FMath::RInterpTo(OldCameraRot, FRotator(CameraPitchInitial, 0.f, 0.f), 
+			DeltaTime, CameraRotationRestoreSpeed);
+		SpringArmComp->SetWorldRotation(NewCameraRot);
+
+		if (FMath::IsNearlyEqual(NewCameraRot.Pitch, FRotator::NormalizeAxis(CameraPitchInitial), 0.5f) &&
+			FMath::IsNearlyEqual(NewCameraRot.Yaw, 0.f, 0.5f))
+		{
+			bRotationRestoreInProgress = false;
+		}
 	}
 }
