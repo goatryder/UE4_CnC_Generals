@@ -2,10 +2,13 @@
 
 
 #include "CC_PlayerCameraPawn.h"
+
+#include "CC_PlayerController.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 
 #include "DrawDebugHelpers.h"
+#include "Widgets/SViewport.h"
 
 // Sets default values
 ACC_PlayerCameraPawn::ACC_PlayerCameraPawn()
@@ -30,7 +33,7 @@ ACC_PlayerCameraPawn::ACC_PlayerCameraPawn()
 	CameraPitchMin = 280.f;
 	CameraPitchMax = 340.f;
 	CameraPitchInitial = 300.f;
-	CameraRotationRelease_RestoreDelay = 0.15f;
+	MouseClickSpeed = 0.15f;
 	CameraRotationRestoreSpeed = 13.f;
 
 	CameraZoomSpeed = 100.f;
@@ -110,11 +113,34 @@ void ACC_PlayerCameraPawn::OnSelect_Pressed()
 	}
 
 	bSelectIsPressed = true;
+
+	// check if should move camera on cursor double click
+	const float SecondClickTime = GetWorld()->GetTimeSeconds() - SelectButtonReleasedTime;
+	if (SecondClickTime < MouseClickSpeed)
+	{
+		if (const APlayerController* PC = GetController<APlayerController>())
+		{
+			FVector TraceStart;
+			FVector TraceDirection;
+			PC->DeprojectMousePositionToWorld(TraceStart, TraceDirection);
+			const FVector TraceEnd = TraceStart + TraceDirection * 30000.f;
+			FHitResult Hit;
+
+			if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility))
+			{
+				CursorPointMoveTo = FVector(Hit.Location.X, Hit.Location.Y, GetActorLocation().Z);
+			}
+		}
+	}
+	
 }
 
 void ACC_PlayerCameraPawn::OnSelect_Released()
 {
 	bSelectIsPressed = false;
+
+	// for moving camera on double click mouse
+	SelectButtonReleasedTime = GetWorld()->GetTimeSeconds();
 }
 
 void ACC_PlayerCameraPawn::OnRotateCamera_Pressed()
@@ -127,10 +153,7 @@ void ACC_PlayerCameraPawn::OnRotateCamera_Pressed()
 	bCameraShouldRotate = true;
 
 	// for camera restore if button pressed and released quickly
-	if (UWorld* World = GetWorld())
-	{
-		CamRotButtonPressedTime = World->GetTimeSeconds();
-	}
+	CamRotButtonPressedTime = GetWorld()->GetTimeSeconds();
 }
 
 void ACC_PlayerCameraPawn::OnRotateCamera_Released()
@@ -138,13 +161,10 @@ void ACC_PlayerCameraPawn::OnRotateCamera_Released()
 	bCameraShouldRotate = false;
 
 	// check if should restore camera
-	if (UWorld* World = GetWorld())
+	const float ButtonHoldTime = GetWorld()->GetTimeSeconds() - CamRotButtonPressedTime;
+	if (ButtonHoldTime < MouseClickSpeed)
 	{
-		const float ButtonHoldTime = World->GetTimeSeconds() - CamRotButtonPressedTime;
-		if (ButtonHoldTime < CameraRotationRelease_RestoreDelay)
-		{
-			bRotationRestoreInProgress = true;
-		}
+		bRotationRestoreInProgress = true;
 	}
 }
 
@@ -161,6 +181,8 @@ void ACC_PlayerCameraPawn::OnMoveCamera_Pressed()
 	}
 
 	bCameraShouldMove = true;
+
+	CursorPointMoveTo = FVector::ZeroVector;  // interrupt move on double click
 }
 
 void ACC_PlayerCameraPawn::OnMoveCamera_Released()
@@ -187,9 +209,10 @@ void ACC_PlayerCameraPawn::OnCameraZoomOut()
 	}
 }
 
-FORCEINLINE void ACC_PlayerCameraPawn::CalcMoveVelocity_Tick(float DeltaTime)
+void ACC_PlayerCameraPawn::CalcMoveVelocity_Tick(float DeltaTime)
 {
-	if (bCameraShouldMove)  // calc movement
+	// CASE calc movement on hold RMB
+	if (bCameraShouldMove)  
 	{
 		FVector2D CursorLocation = 0;
 		FVector2D ViewportSize = 0;
@@ -200,26 +223,16 @@ FORCEINLINE void ACC_PlayerCameraPawn::CalcMoveVelocity_Tick(float DeltaTime)
 			PC->GetMousePosition(CursorLocation.X, CursorLocation.Y);
 		}
 		
-		if (UWorld* World = GetWorld())
-		{
-			if (auto Viewport = World->GetGameViewport())
-			{
-				Viewport->GetViewportSize(ViewportSize);
-			}
-		}
-
-		if (SpringArmComp)
-		{
-			SpringArmLen = SpringArmComp->TargetArmLength;
-		}
+		const auto Viewport = GetWorld()->GetGameViewport();
+		Viewport->GetViewportSize(ViewportSize);
 
 		const FVector ActorFwdVec = FRotator(0.f, SpringArmComp->GetComponentRotation().Yaw, 0.f).Vector();
 		const float Dot = ActorFwdVec | FVector::RightVector;
 		const FVector Cross = (ActorFwdVec ^ FVector::RightVector).GetSafeNormal();
 		const float Sign = FMath::Sign(Cross | FVector::UpVector);
-		float Angle = acosf(Dot) * Sign;
-		float Sin = sinf(Angle);
-		float Cos = -cosf(Angle);
+		const float Angle = acosf(Dot) * Sign;
+		const float Sin = sinf(Angle);
+		const float Cos = -cosf(Angle);
 
 		const FVector2D CursorDelta = CursorLocation - CameraMoveCursorAnchor;
 		const FVector2D CursorDirection = CursorDelta.GetSafeNormal();
@@ -233,25 +246,45 @@ FORCEINLINE void ACC_PlayerCameraPawn::CalcMoveVelocity_Tick(float DeltaTime)
 		);
 
 		const float SpeedMult_Viewport = CursorDelta.Size() / ViewportSize.Y;
-		float SpeedMult_SpringArmLen = FMath::Max(0.2f, SpringArmLen / OnZoomSpringArmLenMax);  // fix if spring arm len is zero
+		const float SpeedMult_SpringArmLen = FMath::Max(0.2f, SpringArmComp->TargetArmLength / OnZoomSpringArmLenMax);
 		const float CameraSpeed = CameraMoveSpeedMax * SpeedMult_Viewport * SpeedMult_SpringArmLen;
 
 		Velocity = MoveDirection * FMath::Min(CameraMoveSpeedMax, CameraSpeed);
+		AddActorWorldOffset(Velocity * DeltaTime);
+
+		return;
 	}
-	else // calc breaking
+
+	// CASE movement on double LBM click
+	if (!CursorPointMoveTo.IsZero())
+	{
+		const float SpeedScale = FMath::Max(0.2f, SpringArmComp->TargetArmLength / OnZoomSpringArmLenMax);
+		const float Speed = CameraMoveSpeedMax * SpeedScale;
+		FVector NewActorLoc = FMath::VInterpConstantTo(GetActorLocation(), CursorPointMoveTo, DeltaTime, Speed);
+		SetActorLocation(NewActorLoc);
+
+		// check if arrived to point destination
+		if (NewActorLoc.Equals(CursorPointMoveTo))
+		{
+			CursorPointMoveTo = FVector::ZeroVector;
+		}
+
+		return;
+	}
+
+	// CASE calc breaking
 	{
 		Velocity = FMath::VInterpConstantTo(Velocity, FVector::ZeroVector, DeltaTime, BreakingSpeed);
+		AddActorWorldOffset(Velocity * DeltaTime);
 	}
-	
-	AddActorWorldOffset(Velocity * DeltaTime);
 }
 
 FORCEINLINE void ACC_PlayerCameraPawn::RestoreCameraRotation_Tick(float DeltaTime)
 {
 	if (bRotationRestoreInProgress && SpringArmComp)
 	{
-		FRotator OldCameraRot = SpringArmComp->GetComponentRotation();
-		FRotator NewCameraRot = FMath::RInterpTo(OldCameraRot, FRotator(CameraPitchInitial, 0.f, 0.f), 
+		const FRotator OldCameraRot = SpringArmComp->GetComponentRotation();
+		const FRotator NewCameraRot = FMath::RInterpTo(OldCameraRot, FRotator(CameraPitchInitial, 0.f, 0.f), 
 			DeltaTime, CameraRotationRestoreSpeed);
 		SpringArmComp->SetWorldRotation(NewCameraRot);
 

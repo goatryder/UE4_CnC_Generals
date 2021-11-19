@@ -46,9 +46,9 @@ class CNC_GENERALS_API ACC_PlayerCameraPawn : public APawn
 	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
 	float CameraPitchInitial;
 
-	// if button is released and time sinse hold rotation <= restore delay, restore camera rotation to default
+	// if button is released should we register mouse event as click instead of hold
 	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
-	float CameraRotationRelease_RestoreDelay;
+	float MouseClickSpeed;
 
 	// deg in seconds
 	UPROPERTY(Category = Camera, EditDefaultsOnly, meta = (AllowPrivateAccess = "true"))
@@ -74,9 +74,7 @@ protected:
 
 public:	
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-
 	virtual void PossessedBy(AController* NewController) override;
-
 	virtual void Tick(float DeltaTime) override;
 
 private:
@@ -87,7 +85,7 @@ private:
 	bool bCameraShouldMove;
 	bool bSelectIsPressed;
 
-	bool MouseXYInputIsUsed() { return bCameraShouldMove || bCameraShouldRotate || bSelectIsPressed; }
+	bool MouseXYInputIsUsed() const { return bCameraShouldMove || bCameraShouldRotate || bSelectIsPressed; }
 
 	void CameraUpInput(float Val);
 	void CameraRightInput(float Val);
@@ -109,12 +107,17 @@ private:
 	FVector Velocity;
 	float BreakingSpeed;
 	FVector2D CameraMoveCursorAnchor;
-	FORCEINLINE void CalcMoveVelocity_Tick(float DeltaTime);
+	FVector CursorPointMoveTo; // if not zero then move quick on cursor pointed location (set on double click)
+	void CalcMoveVelocity_Tick(float DeltaTime);
 
 	// rotation ------------------------------------------------ /
 	
 	bool bRotationRestoreInProgress;
 	float CamRotButtonPressedTime;
 	FORCEINLINE void RestoreCameraRotation_Tick(float DeltaTime);
+
+	// select ------------------------------------------------- /
+
+	float SelectButtonReleasedTime;  // check LMB double click
 
 };
